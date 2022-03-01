@@ -1,0 +1,93 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+# install.packages("tidyverse")
+# install.packages("naniar")
+library(tidyverse)
+```
+# Reading the data #
+```{r}
+df <- read.csv(file = 'rgr_data_test (1).csv')
+df[['REFERRALS_CUMULATIVE']][is.na(df[['REFERRALS_CUMULATIVE']])] <- 0
+df[['SUCCESSFUL_REFERRALS_CUMULATIVE']][is.na(df[['SUCCESSFUL_REFERRALS_CUMULATIVE']])] <- 0
+df[['APPLICATION_DATE']] <- as.Date(df[['APPLICATION_DATE']])
+df[['APPLICATION_APPROVED_DATE']] <- as.Date(df[['APPLICATION_APPROVED_DATE']])
+df[['FIRST_WORK_DATE']] <- as.Date(df[['FIRST_WORK_DATE']])
+nrow(df)
+head(df)
+```
+
+```{r}
+days <- unique(df[['DAYS_SINCE_ACQUISITION']])
+days
+```
+# Cleaning the data #
+We mostly only care about 'Is a referral' or 'Is not a referral', we make a convenience column for this:
+```{r}
+df[['IS_RGR']] <- (df[['ACQUISITION_CHANNEL']] == 'Referral')
+df %>% count(IS_RGR)
+```
+
+An interesting stat will be
+## Dealing with nans  ##
+There are a bunch (648) of 'Unknown' in acquisition channel. Since we have no way of knowing if they're referrals or something else, we simply drop these rows from consideration.
+```{r}
+print(nrow(subset(df, ACQUISITION_CHANNEL == 'Unknown')))
+df <- subset(df, ACQUISITION_CHANNEL != 'Unknown')
+```
+
+We have noticed that there are some missing values for the APPLICATION_DATE & APPLICATION_APPROVED_DATE columns. There are also ~218 rows where APPLICATION_APPROVED_DATE > FIRST_WORK_DATE (or APPLICATION_APPROVED_DATE=nan). I would like, if possible to remove those rows from the analysis. However, we shouldn't do this blindly - we should do it only if these values are MCAR or MAR can we do this. Below I run Little's MCAR test for these cases.
+Null hypothesis here is H0: missing data is MCAR. We use the standard alpha=0.05.
+
+For the APPLICATION_APPROVED_DATE:
+```{r}
+x <- df[, c('IS_RGR', 'RIDER_ID', 'APPLICATION_APPROVED_DATE')]
+x <- x %>% distinct()
+x[['APPLICATION_APPROVED_DATE_MISSING']] <- as.numeric(is.na(x[['APPLICATION_APPROVED_DATE']]))
+y <- x %>% count(APPLICATION_APPROVED_DATE_MISSING, IS_RGR)
+
+y <- reshape(y, idvar='APPLICATION_APPROVED_DATE_MISSING', timevar='IS_RGR', direction='wide', v.names='n')
+y
+y <- select(y, 2, 3)
+chisq.test(y)
+```
+p-value=0.0508 > alpha. Hence we accept the null hypothesis - we could consider removing these elements.
+
+For the APPLICATION DATE:
+```{r}
+x <- df[, c('IS_RGR', 'RIDER_ID', 'APPLICATION_DATE')]
+x <- x %>% distinct()
+x[['APPLICATION_DATE_MISSING']] <- as.numeric(is.na(x[['APPLICATION_DATE']]))
+y <- x %>% count(APPLICATION_DATE_MISSING, IS_RGR)
+
+y <- reshape(y, idvar='APPLICATION_DATE_MISSING', timevar='IS_RGR', direction='wide', v.names='n')
+y
+y <- select(y, 2, 3)
+chisq.test(y)
+```
+p-value < alpha => missing data is not MCAR. So we shouldn't drop it. This APPLICATION_DATE is probably not super important here anyway, so we'll just proceed with nan's.
+
+
+For the mismatching dates:
+```{r}
+x <- df[, c('IS_RGR', 'RIDER_ID', 'APPLICATION_APPROVED_DATE', 'FIRST_WORK_DATE')]
+x <- x %>% distinct()
+x <- x[!is.na(x$APPLICATION_APPROVED_DATE), ]  # Only consider those where we actually have an approved date
+x[['DATE_INCONSISTENT']] <- as.numeric(x[['FIRST_WORK_DATE']] < x[['APPLICATION_APPROVED_DATE']])
+
+y <- x %>% count(DATE_INCONSISTENT, IS_RGR)
+
+y <- reshape(y, idvar='DATE_INCONSISTENT', timevar='IS_RGR', direction='wide', v.names='n')
+y
+y <- select(y, 2, 3)
+chisq.test(y)
+```
+A p-value=0.07 > alpha means that we accept the null hypothesis.
+
+# Creating 
+```{r}
+df
+# df[df$FIRST_WORK_DATE < df$APPLICATION_APPROVED_DATE & !is.na(df$APPLICATION_APPROVED_DATE), ]
+```
